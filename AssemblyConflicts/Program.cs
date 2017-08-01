@@ -79,7 +79,7 @@ namespace AssemblyConflicts
             var rootAssembly = AssemblyDefinition.ReadAssembly(fullPath);
 
             _resolver = new AssemblyResolver();
-            _resolver.AddSearchDirectory(fullPath);
+            _resolver.AddSearchDirectory(Path.GetDirectoryName(fullPath));
             _resolver.RegisterAssembly(rootAssembly);
 
             var allReferencedAssemblies = new List<AssemblyNameReference>();
