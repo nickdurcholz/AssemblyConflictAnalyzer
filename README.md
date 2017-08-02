@@ -13,8 +13,8 @@ This is a small console app that will print out any assembly version conflicts p
 ## Example
 
 Assume that you have a website named MyProject, and it requires multiple versions of a given assembly at runtime. You may notice that
-you are getting runtime errors about failing to load a specific version of an assembly. Instead of using the fusion logging facilities
- at runtime, you may want to statically check for conflicts.  This project allows you to do that.
+you are getting runtime errors about failing to load a specific version of an assembly. Instead of waiting for users to report exceptions
+or using the fusion logging facilities at runtime, you may want to statically check for conflicts.  This project allows you to do that.
 
 After finding conflicts you can be deal with them by ensuring that assembly binding redirects exist, adding things to the GAC, or simply updating dependencies
 so that MyProject and its dependencies all agree on what version of libraries they require.
