@@ -19,6 +19,9 @@ namespace AssemblyConflicts
 
         [SwitchArgument('?', "help", false, Description = "Print this help message")]
         public bool Help { get; set; }
+
+        [SwitchArgument('s', "include-system", false, Description = "Include mscorlib, System, and System.* assemblies")]
+        public bool IncludeSystem { get; set; }
     }
 
     public class Program
@@ -56,14 +59,10 @@ namespace AssemblyConflicts
             try
             {
                 if (_arguments.Help)
-                {
                     parser.ShowUsage();
-                }
 
                 if (!string.IsNullOrEmpty(_arguments.ApplicationAssembly))
-                {
-                    PrintConflicts(_arguments.ApplicationAssembly);
-                }
+                    PrintConflicts();
             }
             catch (Exception e)
             {
@@ -73,9 +72,9 @@ namespace AssemblyConflicts
             return 0;
         }
 
-        private static void PrintConflicts(string fileName)
+        private static void PrintConflicts()
         {
-            var fullPath = Path.GetFullPath(fileName);
+            var fullPath = Path.GetFullPath(_arguments.ApplicationAssembly);
             var rootAssembly = AssemblyDefinition.ReadAssembly(fullPath);
 
             _resolver = new AssemblyResolver();
@@ -89,19 +88,30 @@ namespace AssemblyConflicts
                 null,
                 new Dictionary<string, ReferenceGraph>());
 
-            var referencesGroupedByName = allReferencedAssemblies.GroupBy(n => n.Name);
-            foreach (var assemblyReferences in referencesGroupedByName)
+            var references = allReferencedAssemblies;
+            if (!_arguments.IncludeSystem)
+            {
+                references = references
+                    .Where(r => r.Name != "mscorlib" &&
+                                r.Name != "System" &&
+                                !r.Name.StartsWith("System."))
+                    .OrderBy(r => r.FullName)
+                    .ToList();
+            }
+            foreach (var assemblyReferences in references.GroupBy(n => n.Name))
             {
                 if (assemblyReferences.Count() > 1)
                 {
                     Console.WriteLine("{0} has conflicts. Reference paths", assemblyReferences.Key);
-                    foreach (var reference in CalculateReferencePaths(assemblyReferences.Key, rootGraph))
+                    var orderedReferencePaths = CalculateReferencePaths(assemblyReferences.Key, rootGraph)
+                        .OrderBy(p => p.version)
+                        .ThenBy(p => p.publicKeyToken);
+                    foreach (var reference in orderedReferencePaths)
                     {
-                        string path = reference.Item1;
-                        Version version = reference.Item2;
-                        string publicKeyToken = reference.Item3;
-
-                        Console.WriteLine("  ({0}, {2}) {1}", version, path, publicKeyToken);
+                        Console.WriteLine("  ({0}, {2}) {1}",
+                            reference.version,
+                            reference.path,
+                            reference.publicKeyToken);
                     }
                     Console.WriteLine();
                 }
@@ -128,44 +138,32 @@ namespace AssemblyConflicts
                 }
                 else
                 {
+                    AssemblyDefinition asm = null;
                     try
                     {
-                        var referencedAssembly = _resolver.Resolve(referencedAssemblyName);
-                        var mappedAssemblyName = referencedAssembly.Name;
-                        if (memoized.ContainsKey(mappedAssemblyName.FullName))
-                            childGraph.References.Add(memoized[mappedAssemblyName.FullName]);
-                        else
-                            GetAllReferences(referencedAssembly, allReferencedAssemblies, childGraph, memoized);
+                        asm = _resolver.Resolve(referencedAssemblyName);
                     }
-                    catch (AssemblyResolutionException)
+                    catch (AssemblyResolutionException) { }
+
+                    if (asm == null || asm.FullName != referencedAssemblyName.FullName)
                     {
                         var referenceGraph = new ReferenceGraph { AssemblyName = referencedAssemblyName };
                         memoized.Add(referencedAssemblyName.FullName, referenceGraph);
                         childGraph.References.Add(referenceGraph);
                         allReferencedAssemblies.Add(referencedAssemblyName);
                     }
+                    else if (memoized.ContainsKey(asm.Name.FullName))
+                    {
+                        childGraph.References.Add(memoized[asm.Name.FullName]);
+                    }
+                    else
+                    {
+                        GetAllReferences(asm, allReferencedAssemblies, childGraph, memoized);
+                    }
                 }
             }
             return childGraph;
         }
-
-        //private static ModuleDefinition LoadAssembly(AssemblyNameReference assemblyName)
-        //{
-        //    if (_loadedModuleDefinitions.ContainsKey(assemblyName.FullName))
-        //        return _loadedModuleDefinitions[assemblyName.FullName];
-
-        //    var assemblyInfo = new AssemblyInfo
-        //    {
-        //        currentAssemblyPathSize = 255,
-        //        currentAssemblyPath = new String('\0', 255)
-        //    };
-        //    var hResult = _gac.QueryAssemblyInfo(QueryTypeId.None, GetFusionCompatibleFullName(assemblyName), ref assemblyInfo);
-        //    if (!HResult.IsSuccess(hResult))
-        //        throw new AssemblyResolutionException();
-        //    var module = ModuleDefinition.ReadModule(assemblyInfo.currentAssemblyPath);
-        //    _loadedModuleDefinitions[module.Assembly.FullName] = module;
-        //    return module;
-        //}
 
         public static string GetFusionCompatibleFullName(AssemblyNameReference assemblyName)
         {
@@ -179,7 +177,8 @@ namespace AssemblyConflicts
             ReferenceGraph graphNode)
         {
             var result = new List<(string path, Version version, string publicKeyToken)>();
-            CalculateReferencePaths(assemblySimpleName,
+            CalculateReferencePaths(
+                assemblySimpleName,
                 graphNode,
                 graphNode.AssemblyName.Name,
                 new List<ReferenceGraph>(),
